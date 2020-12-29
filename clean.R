@@ -3,8 +3,6 @@ library('magrittr')
 library('optparse')
 library('aws.s3')
 
-
-
 # if(interactive()) {
 #   argsv = list(utility = 'electric', `address-only` = FALSE)
 # }
@@ -69,10 +67,7 @@ meter_site = fread(import_paths$meter_site, key = 'site') %>%
   .[grepl('[cr]', site)] 
 meter_site = meter_site[type == argsv$utility]
 if(argsv$`address-only`) meter_site = meter_site[method == 'Address']
-if(argsv$filter != 'none') {
-  # TODO: Remember that common currently does not select commercial
-  meter_site = meter_site[get(argsv$filter)]
-} 
+if(argsv$filter != 'none') meter_site = meter_site[get(argsv$filter)]
 
 ## Format Columns
 #==================================================
