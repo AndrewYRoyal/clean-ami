@@ -122,15 +122,15 @@ if(electric) {
 use_cols = intersect(names(use_dat), c(id_cols, 'date', 'use', 'gen'))
 use_dat = use_dat[, .SD, .SDcols = use_cols]
 
-## Censore 5-Sigma Outliers
+## Censor 3-Sigma Outliers
 #==================================================
 meter_stat = use_dat[, .(
   avg = mean(use, na.rm = TRUE),
-  sd = sd(use, na.rm = TRUE)
+  sd = sd(use, na.rm = TRUE)),
   by = id_cols]
 
 use_dat = merge(use_dat, meter_stat)
-use_dat[(use - avg) / sd > 5, use:= NA]
+use_dat[(use - avg) / sd > 3, use:= NA]
 use_dat[, c('avg', 'sd'):= NULL]
 
 ## Clean at Meter Level
