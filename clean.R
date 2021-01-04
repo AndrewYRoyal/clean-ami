@@ -126,12 +126,16 @@ use_dat = use_dat[, .SD, .SDcols = use_cols]
 #==================================================
 meter_stat = use_dat[, .(
   avg = mean(use, na.rm = TRUE),
-  sd = sd(use, na.rm = TRUE)),
+  sd = sd(use, na.rm = TRUE),
+  q95 = quantile(use, 0.95, na.rm = TRUE),
+  q100 = quantile(use, 1, na.rm = TRUE)),
   by = id_cols]
 
 use_dat = merge(use_dat, meter_stat)
 use_dat[(use - avg) / sd > 3, use:= NA]
-use_dat[, c('avg', 'sd'):= NULL]
+use_dat[(q100 / q95 > 4) & (use > q95), use:= NA]
+
+use_dat[, c('avg', 'sd', 'q95', 'q100'):= NULL]
 
 ## Clean at Meter Level
 #==================================================
