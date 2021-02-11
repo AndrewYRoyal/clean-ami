@@ -3,20 +3,12 @@ library('magrittr')
 library('optparse')
 library('aws.s3')
 
-# if(interactive()) {
-#   argsv = list(utility = 'electric', `address-only` = FALSE)
-# }
-
 parser = OptionParser() %>%
   add_option(c('-u', '--utility'),
              action = 'store',
              type = 'character',
              default = 'electric',
              help = 'Utility: gas or electric.') %>%
-  add_option(c('-a', '--address-only'),
-             type = 'logical',
-             default = FALSE,
-             help = 'Option to use only address-matched meters.') %>%
   add_option(c('-f', '--filter'),
              action = 'store',
              type = 'character',
@@ -28,19 +20,24 @@ argsv = parse_args(parser)
 electric = argsv$utility == 'electric'
 id_cols = c('service_point_id')
 
+file_label = argsv$filter
+if(argsv$filter == 'none') file_label = 'all'
+
 import_paths = list(
-  consumption = 'input/daily.csv',
-  meter_site = 'input/meter_site.csv')
+  consumption = 'input/daily.csv')
 
 export_paths = list(
-  imputed = 'output/imputed_%s.csv',
-  use = 'output/%s.csv',
-  has_interval = 'output/has_%s.csv',
-  shutdowns = 'output/shutdowns_%s.csv')
+  imputed = 'output/%s/imputed_%s.csv',
+  use = 'output/%s/%s.csv',
+  has_interval = 'output/%s/has_%s.csv',
+  shutdowns = 'output/%s/shutdowns_%s.csv') %>%
+  lapply(sprintf, argsv$utility, file_label)
+
 
 cat('Getting Meter-Site from s3 ... \n')
 if(!file.exists('input')) dir.create('input')
-aws.s3::s3sync('input', bucket = 'ami-input', direction = 'download')
+if(!file.exists('output')) dir.create('output')
+if(!file.exists(sprintf('output/%s', argsv$utility))) dir.create(sprintf('output/%s', argsv$utility))
 
 startTime = Sys.time()
 
@@ -63,11 +60,10 @@ use_dat[, (id_cols):= lapply(.SD, as.character), .SDcols = id_cols]
 setnames(use_dat, names(col_names), col_names)
 setkeyv(use_dat, id_cols)
 
-meter_site = fread(import_paths$meter_site, key = 'site') %>%
-  .[grepl('[cr]', site)] 
+meter_site = s3readRDS('meter_site.rds', 'ami-input')
 meter_site = meter_site[type == argsv$utility]
-if(argsv$`address-only`) meter_site = meter_site[method == 'Address']
-if(argsv$filter != 'none') meter_site = meter_site[get(argsv$filter)]
+
+if(argsv$filter != 'none') meter_site = meter_site[(get(argsv$filter))]
 
 ## Format Columns
 #==================================================
@@ -108,7 +104,6 @@ shutdowns = shutdowns[, .(shutdown = mean(shutdown)), by = .(site, date)]
 ## Format Consumption Data
 #==================================================
 cat('Formatting consumption data... \n')
-# use_dat[, date:= as.POSIXct(date, format = '%Y-%m-%d', tz = 'UTC')]
 if(electric) {
   gen_dat = use_dat[(channel == 'R'), .SD, .SDcols = c(id_cols, 'date', 'use')]
   setnames(gen_dat, 'use', 'gen')
@@ -191,7 +186,7 @@ imputed_meter = use_dat[, lapply(.SD, mean), .SDcols = imputed_cols, by = id_col
 cat('\n Aggregating to Site... \n')
 use_dat = merge(use_dat, meter_site, by = id_cols)
 if(electric) {
-  value_agg = quote(.(use = sum(use),
+  value_agg = quote(.(use = sum(use, na.rm = TRUE),
                       imputed_use = weighted.mean(imputed_use, use),
                       gen = sum(gen)))
 } else {
@@ -201,20 +196,13 @@ use_dat = use_dat[, eval(value_agg), by = .(site, date)]
 
 ## Export
 #==================================================
-if(!dir.exists('output')) dir.create('output')
-
-f_suffix = argsv$utility
-if(argsv$filter != 'none') f_suffix = sprintf('%s_%s', f_suffix, argsv$filter)
-export_paths = lapply(export_paths, sprintf, f_suffix)
-
-fwrite(imputed_meter, export_paths$imputed, na = 'NA')
-fwrite(use_dat, export_paths$use, na = 'NA')
-fwrite(has_interval, export_paths$has_interval, na = 'NA')
-fwrite(shutdowns, export_paths$shutdowns, na = 'NA')
+fwrite(imputed_meter, export_paths$imputed, na = 'NA', yaml = TRUE)
+fwrite(use_dat, export_paths$use, na = 'NA', yaml = TRUE)
+fwrite(has_interval, export_paths$has_interval, na = 'NA', yaml = TRUE)
+fwrite(shutdowns, export_paths$shutdowns, na = 'NA', yaml = TRUE)
 
 time_diff = Sys.time() - startTime
 cat(round(time_diff, 1), attr(time_diff, 'units'), 'elapsed. \n')
 
 cat('Syncing results to s3... \n')
-if(!file.exists('input')) dir.create('input')
 aws.s3::s3sync('output', bucket = 'ami-output', direction = 'upload')
