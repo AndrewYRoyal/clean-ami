@@ -190,7 +190,7 @@ if(electric) {
                       imputed_use = weighted.mean(imputed_use, use),
                       gen = sum(gen)))
 } else {
-  value_agg = quote(.(use = sum(use), imputed_use = weighted.mean(imputed_use, use)))
+  value_agg = quote(.(use = sum(use, na.rm = TRUE), imputed_use = weighted.mean(imputed_use, use)))
 }
 use_dat = use_dat[, eval(value_agg), by = .(site, date)]
 
