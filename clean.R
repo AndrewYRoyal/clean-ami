@@ -56,11 +56,11 @@ if(cfg$subsample$sample) {
 
 ## Convert to Long Form
 #==================================================
+cat('Converting to long form... \n')
 use_dat = melt(use_dat, id.vars = setdiff(names(use_dat), c('gas', 'elct')), value.name = 'use', variable.name = 'fuel')
 setkeyv(use_dat, id_cols)
 use_dat[channel == 'R', fuel:= 'gen']
-use_dat[, has_fuel:= any(!is.na(use)), by = c('sp', 'fuel')]
-use_dat[, c('channel', 'has_fuel'):= NULL]
+use_dat[, c('channel'):= NULL]
 
 ## Format Shutdown Days
 #==================================================
@@ -69,6 +69,7 @@ use_dat[, c('channel', 'has_fuel'):= NULL]
 
 ## Censor Outliers
 #==================================================
+cat('Detecting outliers... \n')
 meter_stat = use_dat[, .(
   avg = mean(use, na.rm = TRUE),
   sd = sd(use, na.rm = TRUE),
@@ -76,6 +77,7 @@ meter_stat = use_dat[, .(
   q100 = quantile(use, 1, na.rm = TRUE)),
   by = c(id_cols, 'fuel')]
 
+cat('Censoring outliers... \n')
 use_dat = merge(use_dat, meter_stat, by = c(id_cols, 'fuel'))
 stdev_outlier = quote((use - avg) / sd > 3)
 quantile_outlier = quote((q100 / q95 > 4) & (use > q95))
@@ -87,6 +89,7 @@ use_dat[, c('avg', 'sd', 'q95', 'q100'):= NULL]
 
 ## Fill Missing Dates
 #==================================================
+cat('Fill missing dates... \n')
 fill_dates = function(dat, date_seq) {
   id_values = unique(dat[[id_cols[1]]])
   date_grid = expand.grid(id_values, date_seq, stringsAsFactors = FALSE) %>%
@@ -103,7 +106,7 @@ use_dat = split(use_dat, by = 'fuel', keep.by = FALSE) %>%
 use_dat[, msng_date:= is.na(outlier)] # << Missing dates detected by missing non-key column
 use_dat[is.na(outlier), outlier:= FALSE]
 
-## Clean at Meter Level
+## Impute missing values
 #==================================================
 make_counter = function(f, n) {
   x = 0
@@ -151,7 +154,13 @@ use_dat[(all_msng), use:= 0] # << Impute 0 for meter missing all interval data
 use_dat[, all_msng:= NULL]
 
 use_dat[is.na(imputed), imputed:= FALSE]
-use_dat[, use:= round(use, 3)] # << reduce memory overhead
+
+## Reduce Memory Overhead
+#==================================================
+use_dat[, use:= round(use, 3)]
+bool_cols = c('outlier', 'msng_date', 'imputed')
+use_dat[, (bool_cols):= lapply(.SD, as.numeric), .SDcols = bool_cols]
+# TODO: consider truncating fuel column
 
 ## Correct Duplicate Values
 #==================================================
@@ -168,6 +177,8 @@ dup_dat = use_dat[(dup), .SD, .SDcols = c(id_cols, 'fuel')] %>%
 for(f in c('gas', 'elct', 'gen')) {
   sprintf('%s %s meters corrected for dupicate values. \n', dup_dat[fuel == f]$meters, f) %>% cat
 }
+
+dup_dat[, dup:= NULL]
 
 ## Export
 #==================================================

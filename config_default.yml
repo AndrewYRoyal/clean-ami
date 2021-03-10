@@ -26,7 +26,7 @@ key_cols:
   key1: sp
 batches:
   batch: TRUE
-  size: 1000000
+  size: 10000000
 subsample:
-  sample: TRUE
+  sample: FALSE
   meters: 2000
