@@ -76,16 +76,22 @@ meter_stat = use_dat[, .(
   q95 = quantile(use, 0.95, na.rm = TRUE),
   q100 = quantile(use, 1, na.rm = TRUE)),
   by = c(id_cols, 'fuel')]
+meter_stat[, long_tail:= as.numeric(q100 / q95 > 4)]
+num_stats = c('avg', 'sd', 'q95', 'long_tail')
+meter_stat[, (num_stats):= lapply(.SD, round, 3), .SDcols = num_stats]
+meter_stat = meter_stat[, .SD, .SDcols = c(id_cols, 'fuel', num_stats)]
+
+meter_stat[, lapply(.SD, round, 3), .SDcols = c('avg', 'sd', 'q
 
 cat('Censoring outliers... \n')
 use_dat = merge(use_dat, meter_stat, by = c(id_cols, 'fuel'))
 stdev_outlier = quote((use - avg) / sd > 3)
-quantile_outlier = quote((q100 / q95 > 4) & (use > q95))
+quantile_outlier = quote((long_tail == 1) & (use > q95))
 
 use_dat[, outlier:= (eval(stdev_outlier)) | (eval(quantile_outlier))]
 use_dat[is.na(outlier), outlier:= FALSE]
 use_dat[(outlier) & (fuel != 'gen'), use:= NA]
-use_dat[, c('avg', 'sd', 'q95', 'q100'):= NULL]
+use_dat[, (num_stats):= NULL]
 
 ## Fill Missing Dates
 #==================================================
