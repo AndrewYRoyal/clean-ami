@@ -161,7 +161,7 @@ if(cfg$batches$batch) {
   use_dat[, batch:= cut(.I, breaks = batch_bins, labels = FALSE, include.lowest = TRUE)]
   batches = 1:max(use_dat$batch)
   for(b in batches) {
-    export_path = sprintf('output/bath%s.csv', b)
+    export_path = sprintf('output/batch%s.csv', b)
     col_names = setdiff(names(use_dat), 'batch')
     fwrite(use_dat[batch == b, .SD, .SDcols = col_names], file = export_path, na = 'NA')
   }
