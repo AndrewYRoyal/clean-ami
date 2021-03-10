@@ -1,0 +1,32 @@
+file_path: input/daily.csv
+col_names:
+  prem: premise_id
+  sp: service_point_id
+  channel: channel_id
+  date: interval_date
+  gas: therms
+  elct: kwh
+  shutdown: shutdown_indicator
+col_include:
+  prem: FALSE
+  sp: TRUE
+  channel: TRUE
+  date: TRUE
+  gas: TRUE
+  elct: TRUE
+  shutdown: FALSE
+col_classes:
+  prem: character
+  sp: character
+  channel: character
+  date: IDate
+  gas: numeric
+  elct: numeric
+key_cols:
+  key1: sp
+batches:
+  batch: TRUE
+  size: 1000000
+subsample:
+  sample: TRUE
+  meters: 2000

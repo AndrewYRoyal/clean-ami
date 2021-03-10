@@ -2,135 +2,106 @@ library('data.table')
 library('magrittr')
 library('optparse')
 library('aws.s3')
+library('yaml')
+# setwd('D:\\Users\\aroyal641\\Desktop\\workspace\\MFC-PGE\\clean-ami')
+# TODO: make seperate script for reconciling meter counts (maybe to be run locally or on DB)
 
 parser = OptionParser() %>%
-  add_option(c('-u', '--utility'),
-             action = 'store',
-             type = 'character',
-             default = 'electric',
-             help = 'Utility: gas or electric.') %>%
-  add_option(c('-f', '--filter'),
-             action = 'store',
-             type = 'character',
-             default = 'none',
-             help = 'Boolean column used to filter meters.')
+  add_option(
+    c('-c', '--config'),
+    action = 'store',
+    type = 'character',
+    default = 'config_default.yml',
+    help = 'Path to configuration YAML file.') %>%
+  add_option(
+    c('-d', '--delete'),
+    action = 'store_true',
+    type = 'logical',
+    default = FALSE,
+    help = 'Delete existing files in output directory.'
+  )
 
 argsv = parse_args(parser)
+cfg = read_yaml(argsv$config)
 
-electric = argsv$utility == 'electric'
-id_cols = c('service_point_id')
-
-file_label = argsv$filter
-if(argsv$filter == 'none') file_label = 'all'
-
-import_paths = list(
-  consumption = 'input/daily.csv')
-
-export_paths = list(
-  imputed = 'output/%s/imputed_%s.csv',
-  use = 'output/%s/%s.csv',
-  has_interval = 'output/%s/has_%s.csv',
-  shutdowns = 'output/%s/shutdowns_%s.csv') %>%
-  lapply(sprintf, argsv$utility, file_label)
-
-
-cat('Getting Meter-Site from s3 ... \n')
-if(!file.exists('input')) dir.create('input')
-if(!file.exists('output')) dir.create('output')
-if(!file.exists(sprintf('output/%s', argsv$utility))) dir.create(sprintf('output/%s', argsv$utility))
+if(argsv$delete) unlink('output', recursive = TRUE)
+if(!file.exists('output')) dir.create('output') 
 
 startTime = Sys.time()
-
 
 ## Import Data
 #==================================================
 cat('Importing data ... \n')
-col_names = c(
-  'interval_date' = 'date', 
-  'shutdown_indicator' = 'shutdown')
+cfg$col_names = cfg$col_names[unlist(cfg$col_include)]
+cfg$col_classes = cfg$col_classes[unlist(cfg$col_include)]
+names(cfg$col_classes) = cfg$col_names[names(cfg$col_classes)]
 
-if(electric) {
-  col_names = c(col_names, c('channel_id' = 'channel', 'kwh' = 'use'))
-} else {
-  col_names = c(col_names, c('therms' = 'use'))
+use_dat = fread(
+  cfg$file_path,
+  select = unname(unlist(cfg$col_names)), 
+  col.names = setNames(names(cfg$col_names), cfg$col_names), 
+  colClasses = unlist(cfg$col_classes),
+  key = unlist(cfg$key_cols))
+
+id_cols = unname(unlist(cfg$key_cols))
+
+## Select Random Subsample
+#==================================================
+if(cfg$subsample$sample) { 
+  cat(sprintf('Processing random %s meters... \n', format(cfg$subsample$meters, big.mark = ',')))
+  ids = unique(use_dat[[id_cols[1]]])
+  subset_ids = sample(ids, size = cfg$subsample$meters)
+  use_dat = use_dat[get(id_cols[1]) %in% subset_ids]
 }
 
-use_dat = fread(import_paths$consumption)
-use_dat[, (id_cols):= lapply(.SD, as.character), .SDcols = id_cols]
-setnames(use_dat, names(col_names), col_names)
+## Convert to Long Form
+#==================================================
+use_dat = melt(use_dat, id.vars = setdiff(names(use_dat), c('gas', 'elct')), value.name = 'use', variable.name = 'fuel')
 setkeyv(use_dat, id_cols)
+use_dat[channel == 'R', fuel:= 'gen']
+use_dat[, has_fuel:= any(!is.na(use)), by = c('sp', 'fuel')]
+use_dat[, c('channel', 'has_fuel'):= NULL]
 
-meter_site = s3readRDS('meter_site.rds', 'ami-input')
-meter_site = meter_site[type == argsv$utility]
-
-if(argsv$filter != 'none') meter_site = meter_site[(get(argsv$filter))]
-
-## Format Columns
+## Format Shutdown Days
 #==================================================
-cat('Formatting columns ... \n')
-meter_site[, (id_cols):= gsub('m', '', meterID)]
-meter_site = meter_site[, .SD, .SDcols = c('site', id_cols)]
-setkeyv(meter_site, id_cols)
+# if('shutdown' %in% select_cols) {
+# }
 
-## Filter meters
-#==================================================
-cat('Filtering... \n')
-has_interval = unique(use_dat[, .SD, .SDcols = id_cols]) %>%
-  .[, interval:= TRUE] %>%
-  merge(meter_site, all.y = TRUE) %>%
-  .[, interval:= !is.na(interval)]
-
-meters_n = uniqueN(meter_site[, .SD, .SDcols = id_cols])
-cat(format(meters_n, big.mark = ','), 'meters in set. \n')
-
-use_dat = merge(use_dat, meter_site, by = id_cols)
-use_dat[, site:= NULL]
-
-meters_found_n = uniqueN(use_dat[, .SD, .SDcols = id_cols])
-cat(format(meters_found_n, big.mark = ','), 'meters with interval data. \n')
-
-## Count Shutdown Days
-#==================================================
-shutdowns = use_dat[, .SD, .SDcols = c(id_cols, 'date', 'shutdown')]
-shutdowns = use_dat[, shutdown:= (shutdown == 'Y')]
-shutdowns[is.na(shutdown), shutdown:= FALSE]
-
-shutdowns_n = sum(shutdowns$shutdown)
-cat(format(shutdowns_n, big.mark = ','), 'total shutdown meter-days \n')
-
-shutdowns = merge(shutdowns, meter_site, by = id_cols)
-shutdowns = shutdowns[, .(shutdown = mean(shutdown)), by = .(site, date)]
-
-## Format Consumption Data
-#==================================================
-cat('Formatting consumption data... \n')
-if(electric) {
-  gen_dat = use_dat[(channel == 'R'), .SD, .SDcols = c(id_cols, 'date', 'use')]
-  setnames(gen_dat, 'use', 'gen')
-  gen_dat[, gen:= abs(gen)]
-  use_dat = use_dat[!(channel == 'R')]
-  use_dat = merge(use_dat, gen_dat, by = c(id_cols, 'date'), all = TRUE)
-  rm('gen_dat')
-  use_dat[, channel:= NULL]
-  use_dat[is.na(gen), gen:= 0]
-}
-use_cols = intersect(names(use_dat), c(id_cols, 'date', 'use', 'gen'))
-use_dat = use_dat[, .SD, .SDcols = use_cols]
-
-## Censor 3-Sigma Outliers
+## Censor Outliers
 #==================================================
 meter_stat = use_dat[, .(
   avg = mean(use, na.rm = TRUE),
   sd = sd(use, na.rm = TRUE),
   q95 = quantile(use, 0.95, na.rm = TRUE),
   q100 = quantile(use, 1, na.rm = TRUE)),
-  by = id_cols]
+  by = c(id_cols, 'fuel')]
 
-use_dat = merge(use_dat, meter_stat)
-use_dat[(use - avg) / sd > 3, use:= NA]
-use_dat[(q100 / q95 > 4) & (use > q95), use:= NA]
+use_dat = merge(use_dat, meter_stat, by = c(id_cols, 'fuel'))
+stdev_outlier = quote((use - avg) / sd > 3)
+quantile_outlier = quote((q100 / q95 > 4) & (use > q95))
 
+use_dat[, outlier:= (eval(stdev_outlier)) | (eval(quantile_outlier))]
+use_dat[is.na(outlier), outlier:= FALSE]
+use_dat[(outlier) & (fuel != 'gen'), use:= NA]
 use_dat[, c('avg', 'sd', 'q95', 'q100'):= NULL]
+
+## Fill Missing Dates
+#==================================================
+fill_dates = function(dat, date_seq) {
+  id_values = unique(dat[[id_cols[1]]])
+  date_grid = expand.grid(id_values, date_seq, stringsAsFactors = FALSE) %>%
+    as.data.table
+  setnames(date_grid, c(id_cols[1], 'date'))
+  merge(dat, date_grid, by = c(id_cols[1], 'date'), all = TRUE)
+}
+
+date_seq = as.IDate(seq.Date(from = min(use_dat$date), to = max(use_dat$date), by = 'day'))
+
+use_dat = split(use_dat, by = 'fuel', keep.by = FALSE) %>%
+  lapply(fill_dates, date_seq = date_seq) %>%
+  rbindlist(idcol = 'fuel')
+use_dat[, msng_date:= is.na(outlier)] # << Missing dates detected by missing non-key column
+use_dat[is.na(outlier), outlier:= FALSE]
 
 ## Clean at Meter Level
 #==================================================
@@ -145,13 +116,6 @@ make_counter = function(f, n) {
     if(x == n) cat('100% \n')
     f(...)
   }
-}
-fill_dates = function(x, date_range, interval = c('hour', 'day')) {
-  interval = match.arg(interval)
-  id_cols = x[, .SD[1], .SDcols = setdiff(names(x), c('date', 'use', 'gen'))]
-  dates = data.table(date = as.IDate(seq.Date(from = min(date_range), to = max(date_range), by = interval)))
-  dates = cbind(dates, id_cols)
-  merge(x, dates, by = names(dates), all = TRUE)
 }
 impute_value = function(x, value) {
   indicator_col = paste0('imputed_', value)
@@ -169,40 +133,48 @@ impute_value = function(x, value) {
 }
 
 meters_n = uniqueN(use_dat[, .SD, .SDcols = id_cols])
-fill_dates_n = make_counter(fill_dates, n = meters_n)
 impute_value_n = make_counter(impute_value, n = meters_n)
 
-cat('Imputing missing meter data... \n')
-use_dat = split(use_dat, by = id_cols) %>%
-  lapply(fill_dates_n, date_range = c(min(use_dat$date), max(use_dat$date)), interval = 'day') %>%
+cat('Imputing missing intervals... \n')
+use_dat = split(use_dat[fuel != 'gen'], by = id_cols) %>%
   lapply(impute_value_n, value = 'use') %>%
-  lapply(impute_value_n, value = 'gen') %>%
-  rbindlist
-imputed_cols = intersect(names(use_dat), c('imputed_use', 'imputed_gen'))
-imputed_meter = use_dat[, lapply(.SD, mean), .SDcols = imputed_cols, by = id_cols]
+  rbindlist %>%
+  rbind(use_dat[fuel == 'gen'], fill = TRUE) # << Generation is not imputed w/ averages
+setnames(use_dat, 'imputed_use', 'imputed')
 
-## Aggregate to Site
-#==================================================
-cat('\n Aggregating to Site... \n')
-use_dat = merge(use_dat, meter_site, by = id_cols)
-if(electric) {
-  value_agg = quote(.(use = sum(use, na.rm = TRUE),
-                      imputed_use = weighted.mean(imputed_use, use),
-                      gen = sum(gen)))
-} else {
-  value_agg = quote(.(use = sum(use, na.rm = TRUE), imputed_use = weighted.mean(imputed_use, use)))
-}
-use_dat = use_dat[, eval(value_agg), by = .(site, date)]
+use_dat[is.na(use) & (fuel == 'gen'), imputed:= TRUE] 
+use_dat[(imputed) & (fuel == 'gen'), use:= 0] # << Impute Generation w/ 0 values
+
+use_dat[, all_msng:= all(is.na(use)), by = id_cols]
+use_dat[(all_msng), imputed:= TRUE]
+use_dat[(all_msng), use:= 0] # << Impute 0 for meter missing all interval data
+use_dat[, all_msng:= NULL]
+
+use_dat[is.na(imputed), imputed:= FALSE]
 
 ## Export
 #==================================================
-fwrite(imputed_meter, export_paths$imputed, na = 'NA', yaml = TRUE)
-fwrite(use_dat, export_paths$use, na = 'NA', yaml = TRUE)
-fwrite(has_interval, export_paths$has_interval, na = 'NA', yaml = TRUE)
-fwrite(shutdowns, export_paths$shutdowns, na = 'NA', yaml = TRUE)
+if(cfg$batches$batch) {
+  cat('Exporting data in batches... \n')
+  row_count = dim(use_dat)[1]
+  batch_bins = c(seq(1, row_count, by = cfg$batches$size), Inf)
+  use_dat[, batch:= cut(.I, breaks = batch_bins, labels = FALSE, include.lowest = TRUE)]
+  batches = 1:max(use_dat$batch)
+  for(b in batches) {
+    export_path = sprintf('output/bath%s.csv', b)
+    col_names = setdiff(names(use_dat), 'batch')
+    fwrite(use_dat[batch == b, .SD, .SDcols = col_names], file = export_path, na = 'NA')
+  }
+} else {
+  cat('Exporting data in bulk... \n')
+  export_path = sprintf('output/bulk.csv', b)
+  fwrite(use_dat, file = export_path, na = 'NA')
+}
+
+## Sync to S3
+#==================================================
+cat('Syncing results to s3... \n')
+aws.s3::s3sync('output', bucket = 'ami-output', direction = 'upload')
 
 time_diff = Sys.time() - startTime
 cat(round(time_diff, 1), attr(time_diff, 'units'), 'elapsed. \n')
-
-cat('Syncing results to s3... \n')
-aws.s3::s3sync('output', bucket = 'ami-output', direction = 'upload')
