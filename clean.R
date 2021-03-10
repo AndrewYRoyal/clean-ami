@@ -151,6 +151,23 @@ use_dat[(all_msng), use:= 0] # << Impute 0 for meter missing all interval data
 use_dat[, all_msng:= NULL]
 
 use_dat[is.na(imputed), imputed:= FALSE]
+use_dat[, use:= round(use, 3)] # << reduce memory overhead
+
+## Correct Duplicate Values
+#==================================================
+#Note: duplication is rare and is typically for generation values
+use_dat[, dup:= .N > 1, by = c(id_cols, 'fuel', 'date')]
+
+use_dat = use_dat[order(get(id_cols), fuel, date, imputed)]
+use_dat = use_dat[, .SD[1], by = c(id_cols, 'fuel', 'date')] # << choose non-imputed values
+
+dup_dat = use_dat[(dup), .SD, .SDcols = c(id_cols, 'fuel')] %>%
+  unique %>%
+  .[, .(meters = .N), by = 'fuel']
+
+for(f in c('gas', 'elct', 'gen')) {
+  sprintf('%s %s meters corrected for dupicate values. \n', dup_dat[fuel == f]$meters, f) %>% cat
+}
 
 ## Export
 #==================================================
@@ -161,7 +178,7 @@ if(cfg$batches$batch) {
   use_dat[, batch:= cut(.I, breaks = batch_bins, labels = FALSE, include.lowest = TRUE)]
   batches = 1:max(use_dat$batch)
   for(b in batches) {
-    export_path = sprintf('output/bath%s.csv', b)
+    export_path = sprintf('output/batch%s.csv', b)
     col_names = setdiff(names(use_dat), 'batch')
     fwrite(use_dat[batch == b, .SD, .SDcols = col_names], file = export_path, na = 'NA')
   }
