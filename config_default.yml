@@ -1,4 +1,7 @@
-file_path: input/daily.csv
+data: 
+  raw_dir: data/raw
+  blocked: data/blocked/block1.csv
+  clean_dir: data/clean
 col_names:
   prem: premise_id
   sp: service_point_id
@@ -22,11 +25,10 @@ col_classes:
   date: IDate
   gas: numeric
   elct: numeric
-key_cols:
-  key1: sp
 batches:
   batch: TRUE
   size: 10000000
 subsample:
   sample: TRUE
   meters: 2000
+seed: 13
