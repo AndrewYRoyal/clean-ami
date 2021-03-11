@@ -47,7 +47,7 @@ lapply(trunc_tables, function(x) x[, lapply(.SD, class)]) %>%
 
 headers = lapply(trunc_tables, names)
 headers_equal = Reduce(all.equal, headers)
-if(!(headers_equal)) stop('Headers do not match. Check classes log.')
+#if(headers_equal != TRUE) stop('Headers do not match. Check classes log.')
 
 # Collect Service Point IDs
 #======================================================
@@ -78,7 +78,7 @@ cat('Grouping and exporting data... \n')
 
 extract_block_GEN = function(dat, k) {
   function(f) {
-    fread(f, key = k, colClasses = cfg$col_classes$sp) %>%
+    fread(f, key = k, colClasses = c('service_point_id' = cfg$col_classes$sp)) %>% # << needs revision
       merge(dat[, .SD, .SDcols = k])
   }
 } 
