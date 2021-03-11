@@ -28,5 +28,5 @@ batches:
   batch: TRUE
   size: 10000000
 subsample:
-  sample: FALSE
+  sample: TRUE
   meters: 2000

@@ -81,8 +81,6 @@ num_stats = c('avg', 'sd', 'q95', 'long_tail')
 meter_stat[, (num_stats):= lapply(.SD, round, 3), .SDcols = num_stats]
 meter_stat = meter_stat[, .SD, .SDcols = c(id_cols, 'fuel', num_stats)]
 
-meter_stat[, lapply(.SD, round, 3), .SDcols = c('avg', 'sd', 'q
-
 cat('Censoring outliers... \n')
 use_dat = merge(use_dat, meter_stat, by = c(id_cols, 'fuel'))
 stdev_outlier = quote((use - avg) / sd > 3)
