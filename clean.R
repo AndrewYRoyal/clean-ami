@@ -182,7 +182,7 @@ for(f in c('gas', 'elct', 'gen')) {
   sprintf('%s %s meters corrected for dupicate values. \n', dup_dat[fuel == f]$meters, f) %>% cat
 }
 
-dup_dat[, dup:= NULL]
+use_dat[, dup:= NULL]
 
 ## Export
 #==================================================
