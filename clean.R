@@ -60,6 +60,7 @@ use_dat = melt(use_dat, id.vars = setdiff(names(use_dat), c('gas', 'elct')), val
 setkey(use_dat, sp)
 use_dat[channel == 'R', fuel:= 'gen']
 use_dat[, c('channel'):= NULL]
+use_dat = na.omit(use_dat, 'use')
 
 ## Format Shutdown Days
 #==================================================
@@ -110,6 +111,7 @@ use_dat = split(use_dat, by = 'fuel', keep.by = FALSE) %>%
 use_dat[, msng_date:= is.na(outlier)] # << Missing dates detected by missing non-key column
 use_dat[is.na(outlier), outlier:= FALSE]
 
+
 ## Impute missing values
 #==================================================
 make_counter = function(f, n) {
@@ -143,7 +145,9 @@ meters_n = uniqueN(use_dat[, .SD, .SDcols = 'sp'])
 impute_value_n = make_counter(impute_value, n = meters_n)
 
 cat('Imputing missing intervals... \n')
-use_dat = split(use_dat[fuel != 'gen'], by = 'sp') %>%
+
+# use_dat = split(use_dat[fuel != 'gen'], by = 'sp') %>%
+use_dat = split(use_dat[sp == '0000114959'], by = 'sp') %>%
   lapply(impute_value_n, value = 'use') %>%
   rbindlist %>%
   rbind(use_dat[fuel == 'gen'], fill = TRUE) # << Generation is not imputed w/ averages
