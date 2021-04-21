@@ -146,8 +146,7 @@ impute_value_n = make_counter(impute_value, n = meters_n)
 
 cat('Imputing missing intervals... \n')
 
-# use_dat = split(use_dat[fuel != 'gen'], by = 'sp') %>%
-use_dat = split(use_dat[sp == '0000114959'], by = 'sp') %>%
+use_dat = split(use_dat[fuel != 'gen'], by = 'sp') %>%
   lapply(impute_value_n, value = 'use') %>%
   rbindlist %>%
   rbind(use_dat[fuel == 'gen'], fill = TRUE) # << Generation is not imputed w/ averages

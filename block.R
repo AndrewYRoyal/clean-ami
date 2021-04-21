@@ -78,7 +78,7 @@ cat('Grouping and exporting data... \n')
 
 extract_block_GEN = function(dat, k) {
   function(f) {
-    fread(f, key = k, colClasses = c('service_point_id' = cfg$col_classes$sp)) %>% # << needs revision
+    fread(f, key = k, colClasses = c('sp_id' = cfg$col_classes$sp)) %>% # << needs revision
       merge(dat[, .SD, .SDcols = k])
   }
 } 
@@ -87,7 +87,7 @@ blocks = 1:argsv$blocks
 for(b in blocks) {
   extract_block = extract_block_GEN(service_points[block == b], k = cfg$col_names$sp)
   block_dat = lapply(raw_files, extract_block) %>%
-    rbindlist
+    rbindlist(fill = TRUE)
   export_path = sprintf('data/blocked/block%s.csv', b)
   fwrite(block_dat, export_path)
 }
